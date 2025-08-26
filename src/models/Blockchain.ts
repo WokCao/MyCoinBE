@@ -124,7 +124,7 @@ export class Blockchain {
         let newValidator: string | null = null;
 
         for (const [addr, amount] of Object.entries(this.stakeMap)) {
-            if (amount > maxStake) {
+            if (amount > maxStake && amount >= this.minStakeAmount) {
                 maxStake = amount;
                 newValidator = addr;
             }
@@ -133,58 +133,65 @@ export class Blockchain {
         this.validatorAddress = newValidator;
     }
 
-    // getValidatorInfo(): { validator: string | null; stakedAmount: number } {
-    //     if (!this.validatorAddress) {
-    //         return { validator: null, stakedAmount: 0 };
-    //     }
+    getValidatorInfo(): { validator: string | null; stakedAmount: number } {
+        if (!this.validatorAddress) {
+            return { validator: null, stakedAmount: 0 };
+        }
 
-    //     return {
-    //         validator: this.validatorAddress,
-    //         stakedAmount: this.stakeMap[this.validatorAddress] || 0
-    //     };
-    // }
+        return {
+            validator: this.validatorAddress,
+            stakedAmount: this.stakeMap[this.validatorAddress] || 0
+        };
+    }
 
-    // async createBlockPoS() {
-    //     if (!this.validatorAddress) {
-    //         throw new Error("No validator available");
-    //     }
+    async createBlockPoS(txIds: string[] = []) {
+        if (!this.validatorAddress) {
+            throw new Error("No validator available");
+        }
 
-    //     // Kiểm tra validator có đủ stake không
-    //     if ((this.stakeMap[this.validatorAddress] || 0) < this.minStakeAmount) {
-    //         throw new Error("Validator does not meet minimum stake requirement");
-    //     }
+        // Kiểm tra validator có đủ stake không
+        if ((this.stakeMap[this.validatorAddress] || 0) < this.minStakeAmount) {
+            throw new Error("Validator does not meet minimum stake requirement");
+        }
 
-    //     const newBlock = new Block(
-    //         this.chain.length,
-    //         [...this.pendingTransactions],
-    //         this.getLatestBlock().hash,
-    //         0, // Difficulty không cần trong PoS
-    //         this.validatorAddress
-    //     );
+        // Lấy các transaction từ pendingTransactions
+        let selectedTxs = this.pendingTransactions.filter(tx => txIds.includes(tx.id));
 
-    //     // Thưởng cho validator
-    //     const rewardTx = createCoinbaseTx(this.validatorAddress, this.miningReward);
-    //     newBlock.transactions.push(rewardTx);
+        const newBlock = new Block(
+            this.chain.length,
+            selectedTxs,
+            this.getLatestBlock().hash,
+            0, // Difficulty không cần trong PoS
+            this.validatorAddress
+        );
 
-    //     // Tính hash cho block (không cần mining)
-    //     newBlock.hash = newBlock.calculateHash();
-    //     newBlock.timestamp = Date.now();
+        // Thưởng cho validator
+        const rewardTx = createCoinbaseTx(this.validatorAddress, this.miningReward);
+        newBlock.transactions.push(rewardTx);
 
-    //     // Thêm block vào chain
-    //     this.chain.push(newBlock);
+        // Tính hash cho block (không cần mining)
+        newBlock.hash = newBlock.calculateHash();
+        newBlock.timestamp = Date.now();
 
-    //     // Cập nhật unspent transaction outputs
-    //     this.updateUnspentTxOuts(newBlock.transactions);
+        // Thêm block vào chain
+        this.chain.push(newBlock);
 
-    //     // Reset pending transactions
-    //     this.pendingTransactions = [];
+        // Lưu block vào database
+        await this.saveBlockToDB(newBlock);
 
-    //     // Xóa pending transactions từ database
-    //     await prisma.pendingTransaction.deleteMany({});
+        // Cập nhật unspent transaction outputs
+        this.updateUnspentTxOuts(newBlock.transactions);
 
-    //     // Lưu block vào database
-    //     await this.saveBlockToDB(newBlock);
-    // }
+        // remove mined transactions
+        this.pendingTransactions = this.pendingTransactions.filter(tx => {
+            return !selectedTxs.find(stx => stx.id === tx.id);
+        });
+
+        // remove pending transactions to DB
+        await prisma.pendingTransaction.deleteMany({
+            where: { txId: { in: selectedTxs.map(tx => tx.id) } }
+        });
+    }
 
     // Calculate all the current coins in the blockchain
     calculateTotalCoins(): number {
@@ -210,7 +217,6 @@ export class Blockchain {
 
         if (!isFaucet) {
             const rewardTx = createCoinbaseTx(minerAddress, this.miningReward);
-            this.pendingTransactions.push(rewardTx);
             selectedTxs.push(rewardTx);
         }
 

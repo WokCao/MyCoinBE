@@ -128,6 +128,12 @@ async function loadBlockchainFromDB() {
         stakes.forEach(s => {
             blockchain.stakeMap[s.address] = s.amount;
         });
+
+        // Load validator address
+        if (stakes.length > 0) {
+            const sortedStakes = stakes.sort((a, b) => b.amount - a.amount);
+            blockchain.validatorAddress = sortedStakes[0].address;
+        }
     }
 
     console.log(
@@ -139,6 +145,11 @@ async function loadBlockchainFromDB() {
 loadBlockchainFromDB().then(() => {
     console.log("Blockchain restored from DB!");
 });
+
+// Get consensus mode
+app.get("/consensusMode", (_req, res) => {
+    res.json({ mode: blockchain.consensusMode });
+})
 
 // Get blockchain (with pagination)
 app.get("/chain", (req, res) => {
@@ -225,16 +236,14 @@ app.post("/faucet", async (req, res) => {
 
 // Send coin to another address
 app.post("/send", async (req, res) => {
-    if (blockchain.consensusMode === "pow") {
-        const tx: Transaction = req.body;
+    const tx: Transaction = req.body;
 
-        try {
-            blockchain.addTransaction(tx);
-            res.json({ msg: "Transaction created", txId: tx.id });
-        } catch (err: any) {
-            console.error("Error creating transaction:", err);
-            res.status(400).json({ error: err.message });
-        }
+    try {
+        blockchain.addTransaction(tx);
+        res.json({ msg: "Transaction created", txId: tx.id });
+    } catch (err: any) {
+        console.error("Error creating transaction:", err);
+        res.status(400).json({ error: err.message });
     }
 });
 
@@ -281,29 +290,31 @@ app.post("/unstake", (req, res) => {
     }
 });
 
-// // Create block endpoint (chỉ validator mới có thể gọi)
-// app.post("/pos/createBlock", async (req, res) => {
-//     if (blockchain.consensusMode === "pos") {
-//         const { validatorAddress } = req.body; // Validator phải gửi address của họ
+app.post("/pos/createBlock", async (req, res) => {
+    if (blockchain.consensusMode === "pos") {
+        const { validatorAddress, txIds } = req.body; // Validator phải gửi address của họ
+        console.log(validatorAddress, txIds)
+        console.log(blockchain.getValidatorInfo())
 
-//         // Kiểm tra xem người gọi có phải là validator hợp lệ không
-//         const currentValidator = blockchain.getValidatorInfo().validator;
-//         if (currentValidator !== validatorAddress) {
-//             return res.status(403).json({ error: "Only the designated validator can create blocks" });
-//         }
+        // Kiểm tra xem người gọi có phải là validator hợp lệ không
+        const currentValidator = blockchain.getValidatorInfo().validator;
+        if (currentValidator !== validatorAddress) {
+            return res.status(403).json({ error: "Only the designated validator can create blocks" });
+        }
 
-//         try {
-//             await blockchain.createBlockPoS();
-//             res.json({ msg: "PoS block created" });
-//         } catch (err: any) {
-//             res.status(400).json({ error: err.message });
-//         }
-//     } else {
-//         res.status(400).json({ error: "Blockchain is not in PoS mode" });
-//     }
-// });
+        try {
+            await blockchain.createBlockPoS(txIds);
+            res.json({ msg: "PoS block created" });
+        } catch (err: any) {
+            console.log(err)
+            res.status(400).json({ error: err.message });
+        }
+    } else {
+        res.status(400).json({ error: "Blockchain is not in PoS mode" });
+    }
+});
 
-// // Get all stake info endpoint
+// Get all stake info endpoint
 app.get("/pos/stake", (_req, res) => {
     if (blockchain.consensusMode === "pos") {
         res.json(blockchain.stakeMap);
