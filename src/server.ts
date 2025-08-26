@@ -121,6 +121,15 @@ async function loadBlockchainFromDB() {
         }
     }
 
+    // Load stake map if in PoS mode
+    if (blockchain.consensusMode === "pos") {
+        const stakes = await prisma.stake.findMany();
+        blockchain.stakeMap = {};
+        stakes.forEach(s => {
+            blockchain.stakeMap[s.address] = s.amount;
+        });
+    }
+
     console.log(
         `Loaded ${blockchain.chain.length} blocks and ${blockchain.pendingTransactions.length} pending transactions`
     );
@@ -206,7 +215,6 @@ app.post("/faucet", async (req, res) => {
         tx.timestamp = Date.now() + i;;
         tx.id = getTransactionId(tx, true)
 
-        // blockchain.pendingTransactions.push(tx);
         txList.push(tx);
     }
 
@@ -217,43 +225,92 @@ app.post("/faucet", async (req, res) => {
 
 // Send coin to another address
 app.post("/send", async (req, res) => {
-    const tx: Transaction = req.body;
+    if (blockchain.consensusMode === "pow") {
+        const tx: Transaction = req.body;
 
-    try {
-        blockchain.addTransaction(tx);
-        res.json({ msg: "Transaction created", txId: tx.id });
-    } catch (err: any) {
-        console.error("Error creating transaction:", err);
-        res.status(400).json({ error: err.message });
+        try {
+            blockchain.addTransaction(tx);
+            res.json({ msg: "Transaction created", txId: tx.id });
+        } catch (err: any) {
+            console.error("Error creating transaction:", err);
+            res.status(400).json({ error: err.message });
+        }
     }
 });
 
 // Mine selected transactions (PoW)
 app.post("/mineSelected", async (req, res) => {
-    const { minerAddress, txIds } = req.body;
-    try {
-        await blockchain.mineSelectedByIds(txIds, minerAddress);
-        res.json({ msg: "Selected mined!" });
-    } catch (err: any) {
-        res.status(400).json({ error: err.message });
+    if (blockchain.consensusMode === "pow") {
+        const { minerAddress, txIds } = req.body;
+        try {
+            await blockchain.mineSelectedByIds(txIds, minerAddress);
+            res.json({ msg: "Selected mined!" });
+        } catch (err: any) {
+            res.status(400).json({ error: err.message });
+        }
     }
 });
 
-// PoS stake
-// app.post("/stake", (req, res) => {
-//     const { address, amount } = req.body;
-//     blockchain.stake(address, amount);
-//     res.json({ msg: "Stake added" });
-// });
+// Stake endpoint
+app.post("/stake", (req, res) => {
+    if (blockchain.consensusMode === "pos") {
+        const { address, amount } = req.body;
+        try {
+            blockchain.stake(address, amount);
+            res.json({ msg: "Stake added" });
+        } catch (err: any) {
+            res.status(400).json({ error: err.message });
+        }
+    } else {
+        res.status(400).json({ error: "Blockchain is not in PoS mode" });
+    }
+});
 
-// app.post("/pos/createBlock", async (_req, res) => {
-//     try {
-//         await blockchain.createBlockPoS();
-//         res.json({ msg: "PoS block created" });
-//     } catch (err: any) {
-//         res.status(400).json({ error: err.message });
+// Unstake endpoint
+app.post("/unstake", (req, res) => {
+    if (blockchain.consensusMode === "pos") {
+        const { address, amount } = req.body;
+        try {
+            blockchain.unstake(address, amount);
+            res.json({ msg: "Unstake successful" });
+        } catch (err: any) {
+            res.status(400).json({ error: err.message });
+        }
+    } else {
+        res.status(400).json({ error: "Blockchain is not in PoS mode" })
+    }
+});
+
+// // Create block endpoint (chỉ validator mới có thể gọi)
+// app.post("/pos/createBlock", async (req, res) => {
+//     if (blockchain.consensusMode === "pos") {
+//         const { validatorAddress } = req.body; // Validator phải gửi address của họ
+
+//         // Kiểm tra xem người gọi có phải là validator hợp lệ không
+//         const currentValidator = blockchain.getValidatorInfo().validator;
+//         if (currentValidator !== validatorAddress) {
+//             return res.status(403).json({ error: "Only the designated validator can create blocks" });
+//         }
+
+//         try {
+//             await blockchain.createBlockPoS();
+//             res.json({ msg: "PoS block created" });
+//         } catch (err: any) {
+//             res.status(400).json({ error: err.message });
+//         }
+//     } else {
+//         res.status(400).json({ error: "Blockchain is not in PoS mode" });
 //     }
 // });
+
+// // Get all stake info endpoint
+app.get("/pos/stake", (_req, res) => {
+    if (blockchain.consensusMode === "pos") {
+        res.json(blockchain.stakeMap);
+    } else {
+        res.status(400).json({ error: "Blockchain is not in PoS mode" });
+    }
+});
 
 // Get balance of an address
 app.get("/address/:a/balance", (req, res) => {

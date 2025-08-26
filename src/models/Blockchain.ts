@@ -19,16 +19,20 @@ export class Blockchain {
     pendingTransactions: Transaction[];
     miningReward: number;
     consensusMode: "pow" | "pos";
+    validatorAddress: string | null = null; // For PoS
     stakeMap: { [address: string]: number };
     unspentTxOuts: UnspentTxOut[];
+    minStakeAmount: number;
 
     constructor(consensusMode: "pow" | "pos" = "pow") {
         this.chain = [this.createGenesisBlock()];
         this.pendingTransactions = [];
         this.miningReward = 0.01;
         this.consensusMode = consensusMode;
+        this.validatorAddress = null;
         this.stakeMap = {};
         this.unspentTxOuts = [];
+        this.minStakeAmount = 100;
     }
 
     createGenesisBlock(): Block {
@@ -66,6 +70,122 @@ export class Blockchain {
         }
     }
 
+    // For PoS: add stake for an address
+    async stake(address: string, amount: number) {
+        // Kiểm tra số dư
+        const balance = this.getBalanceOfAddress(address);
+        if (balance < amount) {
+            throw new Error("Insufficient balance for staking");
+        }
+
+        // Cập nhật stake
+        if (!this.stakeMap[address]) {
+            this.stakeMap[address] = 0;
+        }
+        this.stakeMap[address] += amount;
+
+        // Lưu DB
+        await prisma.stake.upsert({
+            where: { address },
+            update: { amount: this.stakeMap[address] },
+            create: { address, amount: this.stakeMap[address] }
+        });
+
+        // Xác định validator mới
+        this.updateValidator();
+    }
+
+    async unstake(address: string, amount: number) {
+        if (!this.stakeMap[address] || this.stakeMap[address] < amount) {
+            throw new Error("Insufficient staked amount");
+        }
+
+        this.stakeMap[address] -= amount;
+
+        // Lưu DB
+        await prisma.stake.update({
+            where: { address },
+            data: { amount: this.stakeMap[address] }
+        });
+
+        // Nếu unstake hết thì xoá khỏi DB
+        if (this.stakeMap[address] === 0) {
+            delete this.stakeMap[address];
+            await prisma.stake.delete({ where: { address } });
+        }
+
+        // Xác định validator mới
+        this.updateValidator();
+    }
+
+    // Hàm tìm validator nhiều stake nhất
+    private updateValidator() {
+        let maxStake = 0;
+        let newValidator: string | null = null;
+
+        for (const [addr, amount] of Object.entries(this.stakeMap)) {
+            if (amount > maxStake) {
+                maxStake = amount;
+                newValidator = addr;
+            }
+        }
+
+        this.validatorAddress = newValidator;
+    }
+
+    // getValidatorInfo(): { validator: string | null; stakedAmount: number } {
+    //     if (!this.validatorAddress) {
+    //         return { validator: null, stakedAmount: 0 };
+    //     }
+
+    //     return {
+    //         validator: this.validatorAddress,
+    //         stakedAmount: this.stakeMap[this.validatorAddress] || 0
+    //     };
+    // }
+
+    // async createBlockPoS() {
+    //     if (!this.validatorAddress) {
+    //         throw new Error("No validator available");
+    //     }
+
+    //     // Kiểm tra validator có đủ stake không
+    //     if ((this.stakeMap[this.validatorAddress] || 0) < this.minStakeAmount) {
+    //         throw new Error("Validator does not meet minimum stake requirement");
+    //     }
+
+    //     const newBlock = new Block(
+    //         this.chain.length,
+    //         [...this.pendingTransactions],
+    //         this.getLatestBlock().hash,
+    //         0, // Difficulty không cần trong PoS
+    //         this.validatorAddress
+    //     );
+
+    //     // Thưởng cho validator
+    //     const rewardTx = createCoinbaseTx(this.validatorAddress, this.miningReward);
+    //     newBlock.transactions.push(rewardTx);
+
+    //     // Tính hash cho block (không cần mining)
+    //     newBlock.hash = newBlock.calculateHash();
+    //     newBlock.timestamp = Date.now();
+
+    //     // Thêm block vào chain
+    //     this.chain.push(newBlock);
+
+    //     // Cập nhật unspent transaction outputs
+    //     this.updateUnspentTxOuts(newBlock.transactions);
+
+    //     // Reset pending transactions
+    //     this.pendingTransactions = [];
+
+    //     // Xóa pending transactions từ database
+    //     await prisma.pendingTransaction.deleteMany({});
+
+    //     // Lưu block vào database
+    //     await this.saveBlockToDB(newBlock);
+    // }
+
     // Calculate all the current coins in the blockchain
     calculateTotalCoins(): number {
         return this.unspentTxOuts.reduce((total, uTxO) => total + uTxO.amount, 0);
@@ -78,9 +198,6 @@ export class Blockchain {
 
     // PoW Mining (with selected transactions)
     async mineSelectedByIds(txIds: string[], minerAddress: string, isFaucet: boolean = false, transactions: Transaction[] = []) {
-        if (this.consensusMode !== "pow")
-            throw new Error("Blockchain is in PoS mode");
-
         let selectedTxs = this.pendingTransactions.filter(tx => txIds.includes(tx.id));
 
         if (isFaucet) {
@@ -223,6 +340,11 @@ export class Blockchain {
                     }
                 }
             }
+        }
+
+        if (this.stakeMap[address]) {
+            console.log(`Subtracting staked amount: ${this.stakeMap[address]}`);
+            balance -= this.stakeMap[address];
         }
 
         return balance;

@@ -21,6 +21,12 @@ model Block {
   transactions Transaction[]
 }
 
+model Stake {
+  id        Int    @id @default(autoincrement())
+  address   String @unique
+  amount    Float
+}
+
 model Transaction {
   id        Int      @id @default(autoincrement())
   txId      String           // id của transaction trong blockchain
