@@ -1,0 +1,74 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:./mycoin.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Block {
+  id           Int           @id @default(autoincrement())
+  index        Int
+  hash         String
+  previousHash String
+  timestamp    BigInt
+  nonce        Int?
+  difficulty   Int?
+  minerAddress String
+
+  // Quan hệ với Transaction
+  transactions Transaction[]
+}
+
+model Transaction {
+  id        Int      @id @default(autoincrement())
+  txId      String           // id của transaction trong blockchain
+  blockId   Int?                   // Block chứa transaction
+  block     Block? @relation(fields: [blockId], references: [id])
+
+  // Quan hệ với TxIn và TxOut
+  txIns     TxIn[]
+  txOuts    TxOut[]
+  publicKey String
+
+  timestamp BigInt
+}
+
+model PendingTransaction {
+  id        Int      @id @default(autoincrement())
+  txId      String           // id của pending transaction trong blockchain
+
+  // Quan hệ với TxIn và TxOut
+  txIns     TxIn[]
+  txOuts    TxOut[]
+  publicKey String
+
+  timestamp BigInt
+}
+
+model TxIn {
+  id            Int         @id @default(autoincrement())
+  txOutId       String      // tham chiếu transaction id cũ
+  txOutIndex    Int
+  signature     String?
+
+  transactionId Int?
+  transaction   Transaction? @relation(fields: [transactionId], references: [id])
+
+  pendingTransactionId Int?
+  pendingTransaction   PendingTransaction? @relation(fields: [pendingTransactionId], references: [id])
+}
+
+model TxOut {
+  id            Int         @id @default(autoincrement())
+  address       String
+  amount        Float
+  txIndex       Int         // index của TxOut trong transaction
+
+  transactionId Int?
+  transaction   Transaction? @relation(fields: [transactionId], references: [id])
+
+  pendingTransactionId Int?
+  pendingTransaction   PendingTransaction? @relation(fields: [pendingTransactionId], references: [id])
+}
