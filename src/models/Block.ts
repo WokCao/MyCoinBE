@@ -10,6 +10,7 @@ export class Block {
   nonce: number;
   difficulty: number;
   minerAddress: string;
+  completedInterval: number = 0;
 
   constructor(
     index: number,
@@ -48,6 +49,7 @@ export class Block {
       this.hash = this.calculateHash();
       i++;
     }
+    this.completedInterval = Date.now() - this.timestamp;
     console.log(`Block mined: ${this.hash} after ${i} attempts`);
   }
 }
